@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Power Analyzer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f4f2;
+      --surface: #fcfcfb;
+      --border: #e3e2de;
+      --grid: #ecebe7;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --text-muted: #85847f;
+      --series-1: #2a78d6;
+      --series-2: #eb6834;
+      --series-3: #1baf7a;
+      --series-4: #eda100;
+      --status-good: #1a7f37;
+      --status-critical: #c62828;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #111110;
+        --surface: #1a1a19;
+        --border: #2e2e2c;
+        --grid: #262624;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8d8c85;
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+        --series-4: #c98500;
+        --status-good: #4ac26b;
+        --status-critical: #f06a6a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text-primary);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+    header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+    h1 { font-size: 22px; margin: 0; }
+    h2 { font-size: 17px; margin: 32px 0 12px; }
+    .muted { color: var(--text-muted); font-size: 13px; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .card-title { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 14px; }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+    .big { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
+    .big small { font-size: 15px; font-weight: 400; color: var(--text-secondary); }
+    .stats { display: flex; gap: 16px; color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .hero { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end; }
+    .hero .big { font-size: 40px; }
+    .chart-box { position: relative; height: 200px; }
+    .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    select {
+      background: var(--surface); color: var(--text-primary);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--text-secondary); font-weight: 500; }
+    .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; }
+    .ok { color: var(--status-good); }
+    .alert { color: var(--status-critical); }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Electronic Power Consumption Analyzer</h1>
+    <span class="muted">Device <code>{{ device_id }}</code> · <span id="updated">connecting…</span></span>
+  </header>
+
+  <h2>Live power</h2>
+  <div class="grid" id="live">
+    {% for sw in switches %}
+    <div class="card" data-switch="{{ sw }}">
+      <div class="card-title"><span class="swatch" style="background: var(--series-{{ loop.index }})"></span>{{ sw | replace('_', ' ') | title }}</div>
+      <div class="big"><span class="power">–</span> <small>W</small></div>
+      <div class="stats">
+        <span><span class="current">–</span> A</span>
+        <span><span class="energy">–</span> Wh since boot</span>
+      </div>
+      <div class="muted seen">no data yet</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2>Energy today</h2>
+  <div class="card hero">
+    <div>
+      <div class="muted">Total (IST, since midnight)</div>
+      <div class="big"><span id="today-total">–</span> <small>kWh</small></div>
+    </div>
+    <div class="stats" id="today-split"></div>
+  </div>
+
+  <h2>History</h2>
+  <div class="controls">
+    <label class="muted" for="range">Range</label>
+    <select id="range">
+      <option value="1">Last 1 hour</option>
+      <option value="6" selected>Last 6 hours</option>
+      <option value="24">Last 24 hours</option>
+    </select>
+  </div>
+  <div class="grid">
+    {% for sw in switches %}
+    <div class="card">
+      <div class="card-title"><span class="swatch" style="background: var(--series-{{ loop.index }})"></span>{{ sw | replace('_', ' ') | title }} · power (W)</div>
+      <div class="chart-box"><canvas id="chart-{{ sw }}" aria-label="{{ sw }} power history"></canvas></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2>Insights</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead>
+        <tr><th>Switch</th><th>Anomalies (IsolationForest)</th><th>Usage pattern (KMeans)</th><th>Next-hour estimate (LinearRegression)</th></tr>
+      </thead>
+      <tbody id="insights">
+        <tr><td colspan="4" class="muted">Loading…</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">Models run on the last 48 h of history and refresh every minute.</p>
+  </div>
+</main>
+
+<script>
+const SWITCHES = {{ switches | tojson }};
+const css = getComputedStyle(document.documentElement);
+const v = name => css.getPropertyValue(name).trim();
+const charts = {};
+
+const fmt = (n, d = 1) => (n == null ? "–" : Number(n).toFixed(d));
+const label = sw => sw.replace("_", " ").replace(/^./, c => c.toUpperCase());
+const timeStr = ts => new Date(ts * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function refreshLive() {
+  try {
+    const live = await getJSON("/api/live");
+    for (const sw of SWITCHES) {
+      const card = document.querySelector(`[data-switch="${sw}"]`);
+      const d = live[sw];
+      if (!d) continue;
+      card.querySelector(".power").textContent = fmt(d.power);
+      card.querySelector(".current").textContent = fmt(d.current, 2);
+      card.querySelector(".energy").textContent = fmt(d.energy_wh, 2);
+      const age = Math.round(Date.now() / 1000 - d.ts);
+      card.querySelector(".seen").textContent = age > 30 ? `offline · last seen ${timeStr(d.ts)}` : `updated ${age}s ago`;
+    }
+    document.getElementById("updated").textContent = "live · " + new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST";
+  } catch (e) {
+    document.getElementById("updated").textContent = "connection error";
+    console.error(e);
+  }
+}
+
+async function refreshToday() {
+  try {
+    const t = await getJSON("/api/today");
+    document.getElementById("today-total").textContent = fmt(t.total_wh / 1000, 3);
+    document.getElementById("today-split").innerHTML = SWITCHES
+      .map(sw => `<span>${label(sw)}: ${fmt(t.switches[sw], 1)} Wh</span>`).join("");
+  } catch (e) { console.error(e); }
+}
+
+function makeChart(sw, i) {
+  const color = v(`--series-${i + 1}`);
+  return new Chart(document.getElementById(`chart-${sw}`), {
+    type: "line",
+    data: { labels: [], datasets: [{ label: "Power (W)", data: [], borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.2 }] },
+    options: {
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => ` ${fmt(c.parsed.y)} W` } },
+      },
+      scales: {
+        x: { ticks: { color: v("--text-muted"), maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false }, border: { color: v("--border") } },
+        y: { beginAtZero: true, ticks: { color: v("--text-muted"), maxTicksLimit: 5 }, grid: { color: v("--grid") }, border: { display: false } },
+      },
+    },
+  });
+}
+
+async function refreshHistory() {
+  const hours = document.getElementById("range").value;
+  await Promise.all(SWITCHES.map(async (sw, i) => {
+    try {
+      const h = await getJSON(`/api/history?switch=${sw}&hours=${hours}`);
+      const chart = charts[sw] || (charts[sw] = makeChart(sw, i));
+      chart.data.labels = h.ts.map(timeStr);
+      chart.data.datasets[0].data = h.power;
+      chart.update();
+    } catch (e) { console.error(e); }
+  }));
+}
+
+function needMore(r) {
+  return `<span class="muted">Collecting data (${r.have}/${r.needed})</span>`;
+}
+
+async function refreshInsights() {
+  try {
+    const ins = await getJSON("/api/insights");
+    document.getElementById("insights").innerHTML = SWITCHES.map(sw => {
+      const { anomalies: a, usage: u, forecast: f } = ins[sw];
+      const aCell = a.status !== "ok" ? needMore(a)
+        : a.count === 0 ? `<span class="ok">✓ No unusual readings</span>`
+        : `<span class="alert">⚠ ${a.count} unusual reading${a.count > 1 ? "s" : ""}</span><br>` +
+          a.recent.map(x => `<span class="muted">${x.time} · ${x.power} W</span>`).join("<br>");
+      const uCell = u.status !== "ok" ? needMore(u)
+        : `Now: <span class="tag">${u.current}</span><br><span class="muted">Hours: idle ${u.hours.idle} · normal ${u.hours.normal} · heavy ${u.hours.heavy}</span>`;
+      const fCell = f.status !== "ok" ? needMore(f)
+        : `<strong>${f.estimate_wh} Wh</strong> <span class="muted">for ${f.hour} IST</span>`;
+      return `<tr><td>${label(sw)}</td><td>${aCell}</td><td>${uCell}</td><td>${fCell}</td></tr>`;
+    }).join("");
+  } catch (e) {
+    document.getElementById("insights").innerHTML = `<tr><td colspan="4" class="muted">Insights unavailable: ${e.message}</td></tr>`;
+  }
+}
+
+document.getElementById("range").addEventListener("change", refreshHistory);
+
+refreshLive(); refreshToday(); refreshHistory(); refreshInsights();
+setInterval(refreshLive, 5000);
+setInterval(refreshHistory, 30000);
+setInterval(refreshToday, 60000);
+setInterval(refreshInsights, 60000);
+</script>
+</body>
+</html>
