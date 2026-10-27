@@ -1,0 +1,28 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+firmware/.pio/
+
+# Firmware secrets
+firmware/include/secrets.h
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Environment / credentials
+.env
+*.env
+!*.env.example
+serviceAccount*.json
+service-account*.json
+*-firebase-adminsdk-*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
